@@ -1,4 +1,6 @@
 import os
+import hash_module
+
 
 # foreach file in folder recursively
 # cache file name, file hash, file size
@@ -7,14 +9,22 @@ import os
 
 def index_directory(path):
     for dirname, dirs, files in os.walk(path):
-        #print(dirname)     # relative path (from cwd) to the directory being processed
-        #print(dirs)       # list of subdirectories in the currently processed directory
-        #print(files)       # list of files in the currently processed directory
-
         for filename in files:
-            print(os.path.join(dirname, filename))   # relative path to the "current" file
+            fullpath = os.path.join(dirname, filename)
+            sha256 = hash_module.hash_file(fullpath)
+            print(f"{filename}, {fullpath}, {sha256}")
+            
+            
+            
     return
 
 
-index_directory("C:/CODE_SEGMANT/dupe-finder/ExampleFolder")
+
+
+index_directory("ExampleFolder")
+
+
+
+
+
 
