@@ -3,17 +3,11 @@ from blake3 import blake3
 import pymongo
 import re
 
-client = pymongo.MongoClient("mongodb://localhost:27017/")
-db = client["dupe-finder"]
-source_collection = db["file-index"]
-target_collection = db["target-index"]
-
 def add_file_to_db(collection, path, filename):
     exists = collection.count_documents({"path": path}, limit=1) != 0
     if not exists:
         collection.insert_one({"path": path, "filename":filename})
     return
-
 
 def calculate_missing_hashes(collection):
     unhashed_documents = collection.find({"hash": None})
@@ -25,12 +19,12 @@ def calculate_missing_hashes(collection):
         collection.update_one({"_id": document["_id"]}, { "$set": { "hash": hash_string } })
     return
 
-def database_create_indexes():
-    print(target_collection.index_information())
-    # target_collection.create_index("path")
-    # target_collection.create_index("filename")
-    target_collection.create_index("hash")
-    print(target_collection.index_information())
+def database_create_indexes(collection):
+    print(collection.index_information())
+    # collection.create_index("path")
+    # collection.create_index("filename")
+    collection.create_index("hash")
+    print(collection.index_information())
     return
 
 def find_dupes_in_same_collection(collection):
@@ -55,22 +49,22 @@ def add_all_files_to_index(collection, path):
             print(f"{fullpath}")
     return
 
-def find_and_delete_dupes(src, trg):
-    all_targets = trg.find()
+def find_and_delete_dupes(source_collection, target_collection):
+    all_targets = target_collection.find()
     for target in all_targets:
         target_hash = target["hash"]
         target_filename = target["filename"]
         target_path = target["path"]
         if not os.path.exists(target_path):
             print(f"removing from db {target_path} {target_filename}")
-            trg.delete_one({"_id": target["_id"]})    
-
-        is_dupe = src.count_documents({"hash": target_hash, "filename": target_filename}, limit=1) != 0
+            target_collection.delete_one({"_id": target["_id"]})    
+            
+        is_dupe = source_collection.count_documents({"hash": target_hash, "filename": target_filename}, limit=1) != 0
         if is_dupe:
             print(f"dupe found {target_filename}           {target_path}         {target_hash}")
             if os.path.exists(target_path):
-                os.remove(target_path)  
-            trg.delete_one({"_id": target["_id"]})    
+                os.remove(target_path)
+            target_collection.delete_one({"_id": target["_id"]})    
     return
 
 def remove_deleted_files_from_db(collection):
@@ -93,13 +87,21 @@ def delete_from_database_with_regex(collection):
         target_path = target["path"]
         print(f"found {target_path} {target_filename} {target_hash}")
         collection.delete_one({"_id": target["_id"]})
+    return
 
-# add_all_files_to_index(target_collection, "C:/Users/kardan/Desktop")
-# calculate_missing_hashes(target_collection)
-# setup()
-# find()
-# find_and_delete_dupes(source_collection, target_collection)
-# remove_deleted_files_from_db(source_collection)
 
+def main():
+    client = pymongo.MongoClient("mongodb://localhost:27017/")
+    db = client["dupe-finder"]
+    source_collection = db["file-index"]
+    target_collection = db["target-index"]
+    
+    # add_all_files_to_index(target_collection, "C:/Users/kardan/Desktop")
+    # calculate_missing_hashes(target_collection)
+    # find_and_delete_dupes(source_collection, target_collection)
+    # remove_deleted_files_from_db(source_collection)
+    return 
+
+main()
 
 
