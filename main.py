@@ -2,6 +2,8 @@ import os
 from blake3 import blake3
 import pymongo
 import re
+from send2trash import send2trash
+
 
 def hash_file(path):
     hasher = blake3()
@@ -59,7 +61,7 @@ def find_and_delete_dupes(source_collection, target_collection):
         if is_dupe:
             print(f"dupe found {target_filename}           {target_path}         {target_hash}")
             if os.path.exists(target_path):
-                os.remove(target_path)
+                send2trash(target_path)
             target_collection.delete_one({"_id": target["_id"]})    
     return
 
@@ -104,19 +106,15 @@ def main():
     temporary_source_collection = db["tmp_source"]
     temporary_target_collection = db["tmp_target"]
     
-    do_job(
-        temporary_source_collection, 
-        temporary_target_collection, 
-        "U:/COLD_STORAGE/Terasad/Backups/Backup 05.08.2017/Records/Fantazya2017/", 
-        "U:/COLD_STORAGE/Terasad/Backups/Backup 15.09.2017/Photos/miCam/"
-    )
+    # do_job(
+    #     temporary_source_collection, 
+    #     temporary_target_collection, 
+    #     "U:/COLD_STORAGE/Terasad/Backups/Backup 05.08.2017/Records/Fantazya2017/", 
+    #     "U:/COLD_STORAGE/Terasad/Backups/Backup 15.09.2017/Photos/miCam/"
+    # )
     
-    
-    # find_dupes_in_same_collection(source_collection)
-    # add_all_files_to_index_if_not_exists(source_collection, "U:/COLD_STORAGE")
-    # calculate_missing_hashes(source_collection)
-    # find_and_delete_dupes(source_collection, target_collection)
-    # remove_deleted_files_from_db(target_collection)
+    # sync_index_with_path(source_collection, "U:/COLD_STORAGE")
+    find_dupes_in_same_collection(source_collection)
     return 
 
 main()
