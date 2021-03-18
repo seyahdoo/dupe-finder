@@ -2,7 +2,7 @@ import os
 from blake3 import blake3
 import pymongo
 import re
-from send2trash import send2trash
+import shutil
 
 def hash_file(path):
     hasher = blake3()
@@ -12,14 +12,20 @@ def hash_file(path):
     hash_string = hasher.hexdigest()
     return hash_string
 
-def calculate_missing_hashes(collection):
+def calculate_missing_hashes(collection, cache_collection):
     unhashed_documents = collection.find({"hash": None})
     for document in unhashed_documents:
         path = document["path"]
-        print(f"hashing   {path}")
-        hash_string = hash_file(path)
-        print(f"hash      {path}     {hash_string}")
-        collection.update_one({"_id": document["_id"]}, { "$set": { "hash": hash_string } })
+        hash = None
+        if cache_collection != None:
+            cached_document = cache_collection.find_one({"path": path})
+            if cached_document != None:
+                hash = cached_document["hash"]
+        if hash == None:
+            print(f"hashing   {path}")
+            hash = hash_file(path)
+            print(f"hash      {path}     {hash}")
+        collection.update_one({"_id": document["_id"]}, { "$set": { "hash": hash } })
     return
 
 def database_create_indexes(collection):
@@ -30,7 +36,7 @@ def database_create_indexes(collection):
     print(collection.index_information())
     return
 
-def sync_index_with_path(collection, path):
+def sync_index_with_path(collection, path, cache_collection=None):
     all_entries = collection.find()
     for entry in all_entries:
         if not os.path.exists(entry["path"]):
@@ -39,14 +45,15 @@ def sync_index_with_path(collection, path):
     for dirname, dirs, files in os.walk(path):
         for filename in files:
             fullpath = os.path.join(dirname, filename)
+            fullpath = fullpath.replace("\\", "/")
             exists = collection.count_documents({"path": fullpath}, limit=1) != 0
             if not exists:
                 print(f"adding to db {filename}       {fullpath}")
                 collection.insert_one({"path": fullpath, "filename":filename})
-    calculate_missing_hashes(collection)
+    calculate_missing_hashes(collection, cache_collection)
     return
 
-def find_and_delete_dupes(source_collection, target_collection):
+def find_and_delete_dupes(source_collection, target_collection, recycle_path):
     all_targets = target_collection.find()
     for target in all_targets:
         target_hash = target["hash"]
@@ -58,9 +65,9 @@ def find_and_delete_dupes(source_collection, target_collection):
         is_dupe = source_collection.count_documents({"hash": target_hash, "filename": target_filename}, limit=1) != 0
         if is_dupe:
             print(f"dupe found {target_filename}           {target_path}         {target_hash}")
-            # if os.path.exists(target_path):
-            #     os.remove(target_path)
-            # target_collection.delete_one({"_id": target["_id"]})    
+            if os.path.exists(target_path):
+                shutil.move(target_path, os.path.join(recycle_path, target_filename))
+            target_collection.delete_one({"_id": target["_id"]})    
     return
 
 def delete_from_database_with_regex(collection):
@@ -88,6 +95,10 @@ def is_filename_image(filename):
            filename.endswith(".mp4")
 
 def find_dupes_in_same_collection(collection):
+    
+    dupes_with_date = 0
+    dupes_withuut_date = 0
+    
     pipeline = [
         {"$group": {"_id": { "hash": "$hash", "filename": "$filename"}, "count": {"$sum": 1}}},
         {"$match": {"count": {"$gt": 1}}}
@@ -109,25 +120,56 @@ def find_dupes_in_same_collection(collection):
             continue
             
         found_documents = collection.find({"hash": hash, "filename": filename})
-        count = found_documents.count()
+        count = collection.count_documents({"hash": hash, "filename": filename})
         if count > 0:
+            dated_document_count = 0
             for found_document in found_documents:
-                print(f"{found_document['filename']}            {found_document['path']}")
-            print("--")
-            print(count)
+                found_document_path:str = found_document['path']
+                if re.match(".*(\d\d\.\d\d\.\d\d\d\d).*", found_document_path) is not None:
+                    dated_document_count += 1
+                # print(f"{found_document['filename']}            {found_document['path']}")
+            if dated_document_count == 1 and count >= 2:
+                # dupes_with_date += 1
+                found_documents.rewind()
+                for found_document in found_documents:
+                    found_document_path:str = found_document['path']
+                    found_document_path = found_document_path.replace("\\", "/")
+                    
+                    print(f"{found_document['filename']}            {found_document_path}")
+                print("--")
+
+
+            # else:
+                # dupes_withuut_date += 1
+                
+            # print("--")
+            # print(count)
+    # print(f"dupes with date {dupes_with_date}")
+    # print(f"dupes without date {dupes_withuut_date}")
     return
+
+# def check_folder_similarity(source_folder, target_folder):
+#     
+#     return 
 
 def clean_collection(collection):
     collection.delete_many({})
     return 
 
-def do_job(source_collection, target_collection, source_path, target_path):
+def do_job(source_collection, target_collection, source_path, target_path, recycle_bin_path, cache_collection):
     clean_collection(source_collection)
     clean_collection(target_collection)
-    sync_index_with_path(source_collection, source_path)
-    sync_index_with_path(target_collection, target_path)
-    find_and_delete_dupes(source_collection, target_collection)
+    sync_index_with_path(source_collection, source_path, cache_collection)
+    sync_index_with_path(target_collection, target_path, cache_collection)
+    find_and_delete_dupes(source_collection, target_collection, recycle_bin_path)
     return
+
+def change_path_format(collection):
+    all_documents = collection.find({})
+    for document in all_documents:
+        document["path"] = document["path"].replace("\\", "/")
+        collection.delete_one({"_id": document["_id"]})
+        collection.insert_one(document)
 
 def main():
     client = pymongo.MongoClient("mongodb://localhost:27017/")
@@ -138,16 +180,21 @@ def main():
     temporary_source_collection = db["tmp_source"]
     temporary_target_collection = db["tmp_target"]
     
+    recycle_bin_path = "U:/_RECYCLE_BIN/"
+    
     # do_job(
     #     temporary_source_collection, 
     #     temporary_target_collection, 
-    #     "U:/COLD_STORAGE/Seaboss/CDLERDEN/muhfoto2/", 
-    #     "U:/COLD_STORAGE/Seaboss/CDLERDEN/muhfoto1/"
+    #     "U:/COLD_STORAGE/Terasad/TERASAD/DATA/Resimler/Fotoğraflar/28.05.2016 DCIM/Camera/", 
+    #     "U:/COLD_STORAGE/Terasad/TERASAD/DATA/Resimler/Fotoğraflar/resim/",
+    #     recycle_bin_path,
+    #     source_collection
     # )
     
-    low_priority_paths = [
-        "U:/COLD_STORAGE/Seaboss/CDLERDEN/cd2/121CASIO/"
-    ]
+    
+    # low_priority_paths = [
+    #     "U:/COLD_STORAGE/Seaboss/CDLERDEN/cd2/121CASIO/"
+    # ]
     
     # sync_index_with_path(source_collection, "U:/COLD_STORAGE")
     find_dupes_in_same_collection(source_collection)
