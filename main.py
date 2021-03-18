@@ -3,11 +3,13 @@ from blake3 import blake3
 import pymongo
 import re
 
-def add_file_to_db(collection, path, filename):
-    exists = collection.count_documents({"path": path}, limit=1) != 0
-    if not exists:
-        collection.insert_one({"path": path, "filename":filename})
-    return
+def hash_file(path):
+    hasher = blake3()
+    with open(path,"rb") as f:
+        for byte_block in iter(lambda: f.read(4096),b""):
+            hasher.update(byte_block)
+    hash_string = hasher.hexdigest()
+    return hash_string
 
 def calculate_missing_hashes(collection):
     unhashed_documents = collection.find({"hash": None})
@@ -21,32 +23,26 @@ def calculate_missing_hashes(collection):
 
 def database_create_indexes(collection):
     print(collection.index_information())
-    # collection.create_index("path")
-    # collection.create_index("filename")
+    collection.create_index("path")
+    collection.create_index("filename")
     collection.create_index("hash")
     print(collection.index_information())
     return
 
-def find_dupes_in_same_collection(collection):
-    f = collection.find({"$group": { "_id": "$hash", "count": { "$sum": 1}}}, {"$match": { "count": { "$gt": 1 }}})
-    for file in f:
-        print(file)
-    return
-
-def hash_file(path):
-    hasher = blake3()
-    with open(path,"rb") as f:
-        for byte_block in iter(lambda: f.read(4096),b""):
-            hasher.update(byte_block)
-    hash_string = hasher.hexdigest()
-    return hash_string
-
-def add_all_files_to_index(collection, path):
+def sync_index_with_path(collection, path):
+    all_entries = collection.find()
+    for entry in all_entries:
+        if not os.path.exists(entry["path"]):
+            print(f"removing from db {entry['filename']}         {entry['path']} ")
+            collection.delete_one({"_id": entry["_id"]})
     for dirname, dirs, files in os.walk(path):
         for filename in files:
             fullpath = os.path.join(dirname, filename)
-            add_file_to_db(collection, fullpath, filename)
-            print(f"{fullpath}")
+            exists = collection.count_documents({"path": fullpath}, limit=1) != 0
+            if not exists:
+                print(f"adding to db {filename}       {fullpath}")
+                collection.insert_one({"path": fullpath, "filename":filename})
+    calculate_missing_hashes(collection)
     return
 
 def find_and_delete_dupes(source_collection, target_collection):
@@ -67,17 +63,6 @@ def find_and_delete_dupes(source_collection, target_collection):
             target_collection.delete_one({"_id": target["_id"]})    
     return
 
-def remove_deleted_files_from_db(collection):
-    all_targets = collection.find()
-    for target in all_targets:
-        target_hash = target["hash"]
-        target_filename = target["filename"]
-        target_path = target["path"]
-        if not os.path.exists(target_path):
-            print(f"removing from db {target_path} {target_filename}")
-            collection.delete_one({"_id": target["_id"]})
-    return
-
 def delete_from_database_with_regex(collection):
     regx = re.compile(".*RECYCLE.*", re.IGNORECASE)
     found = collection.find({"path" : regx})
@@ -89,6 +74,26 @@ def delete_from_database_with_regex(collection):
         collection.delete_one({"_id": target["_id"]})
     return
 
+def find_dupes_in_same_collection(collection):
+    findings = collection.aggregate([
+        {"$group" : { "_id": "$hash", "count": { "$sum": 1 } } },
+        {"$match": {"_id" :{ "$ne" : None } , "count" : {"$gt": 1} } },
+        {"$project": {"hash" : "$_id", "_id" : 0} }
+    ])
+    
+    # f = collection.find({"$group": { "_id": "$hash", "count": { "$sum": 1}}}, {"$match": { "count": { "$gt": 1 }}})
+    for document in findings:
+        found_documents = collection.find({"hash": document["hash"]})
+        for found_document in found_documents:
+            print(found_document["path"])
+        print("--")
+    return
+
+def do_job(source_collection, target_collection, source_path, target_path):
+    sync_index_with_path(source_collection, source_path)
+    sync_index_with_path(target_collection, target_path)
+    find_and_delete_dupes(source_collection, target_collection)
+    return
 
 def main():
     client = pymongo.MongoClient("mongodb://localhost:27017/")
@@ -96,10 +101,22 @@ def main():
     source_collection = db["file-index"]
     target_collection = db["target-index"]
     
-    # add_all_files_to_index(target_collection, "C:/Users/kardan/Desktop")
-    # calculate_missing_hashes(target_collection)
+    temporary_source_collection = db["tmp_source"]
+    temporary_target_collection = db["tmp_target"]
+    
+    do_job(
+        temporary_source_collection, 
+        temporary_target_collection, 
+        "U:/COLD_STORAGE/Terasad/Backups/Backup 05.08.2017/Records/Fantazya2017/", 
+        "U:/COLD_STORAGE/Terasad/Backups/Backup 15.09.2017/Photos/miCam/"
+    )
+    
+    
+    # find_dupes_in_same_collection(source_collection)
+    # add_all_files_to_index_if_not_exists(source_collection, "U:/COLD_STORAGE")
+    # calculate_missing_hashes(source_collection)
     # find_and_delete_dupes(source_collection, target_collection)
-    # remove_deleted_files_from_db(source_collection)
+    # remove_deleted_files_from_db(target_collection)
     return 
 
 main()
