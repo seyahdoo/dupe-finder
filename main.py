@@ -3,6 +3,7 @@ from blake3 import blake3
 import pymongo
 import re
 import shutil
+from dirsync import sync
 
 def hash_file(path):
     hasher = blake3()
@@ -170,12 +171,18 @@ def change_path_format(collection):
         document["path"] = document["path"].replace("\\", "/")
         collection.delete_one({"_id": document["_id"]})
         collection.insert_one(document)
+    return 
+
+def find_differences(source, target):
+    sync(source, target, "diff")
+    return 
 
 def main():
     client = pymongo.MongoClient("mongodb://localhost:27017/")
     db = client["dupe-finder"]
     source_collection = db["file-index"]
     target_collection = db["target-index"]
+    index_after_refactorings = db["index-after-refactorings"]
     
     temporary_source_collection = db["tmp_source"]
     temporary_target_collection = db["tmp_target"]
@@ -196,8 +203,9 @@ def main():
     #     "U:/COLD_STORAGE/Seaboss/CDLERDEN/cd2/121CASIO/"
     # ]
     
+    find_differences("D:/COLD_STORAGE/", "U:/GOOGLE_DRIVE/COLD_STORAGE")
     # sync_index_with_path(source_collection, "U:/COLD_STORAGE")
-    find_dupes_in_same_collection(source_collection)
+    # find_dupes_in_same_collection(source_collection)
     return 
 
 main()
