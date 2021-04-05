@@ -3,7 +3,6 @@ from blake3 import blake3
 import pymongo
 import re
 import shutil
-from dirsync import sync
 
 def hash_file(path):
     hasher = blake3()
@@ -171,11 +170,22 @@ def change_path_format(collection):
         document["path"] = document["path"].replace("\\", "/")
         collection.delete_one({"_id": document["_id"]})
         collection.insert_one(document)
-    return 
+    return
+
+def find_missing(source_collection, target_collection):
+    all_source_documents = source_collection.find({})
+    for source_document in all_source_documents:
+        filename = source_document["filename"]
+        hash = source_document["hash"]
+        path = source_document["path"]
+        found_count = target_collection.count_documents({"filename": filename, "hash":hash})
+        if found_count <= 0:
+            print(f"oh no! {path} {filename} {hash}")
+    return
 
 def find_differences(source, target):
     sync(source, target, "diff")
-    return 
+    return
 
 def main():
     client = pymongo.MongoClient("mongodb://localhost:27017/")
@@ -203,9 +213,16 @@ def main():
     #     "U:/COLD_STORAGE/Seaboss/CDLERDEN/cd2/121CASIO/"
     # ]
     
-    find_differences("D:/COLD_STORAGE/", "U:/GOOGLE_DRIVE/COLD_STORAGE")
+    #find_differences("D:/COLD_STORAGE/", "U:/GOOGLE_DRIVE/COLD_STORAGE")
     # sync_index_with_path(source_collection, "U:/COLD_STORAGE")
     # find_dupes_in_same_collection(source_collection)
+    
+    # sync_index_with_path(target_collection, "U:/COLD_STORAGE")
+    # find_dupes_in_same_collection(source_collection)
+    # database_create_indexes(source_collection)
+    # database_create_indexes(target_collection)
+    find_missing(source_collection, target_collection)
+
     return 
 
 main()

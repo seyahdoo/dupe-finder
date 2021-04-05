@@ -1,3 +1,2 @@
-﻿Send2Trash
-blake3
+﻿blake3
 pymongo
